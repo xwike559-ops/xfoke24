@@ -3,7 +3,7 @@ from PIL import Image
 from pathlib import Path
 
 
-def resize_images_in_folders(root_path, target_size=(512, 512)):
+def resize_images_in_folders(root_path, target_size=(520, 520)):
     """
     递归遍历路径下的所有文件夹，将图片调整为指定大小
 
@@ -62,10 +62,10 @@ def resize_images_in_folders(root_path, target_size=(512, 512)):
 
 def main():
     # 设置你的根目录路径
-    root_directory = r"E:\Multi-fusion_cnn-swinv2\dataset\train"
+    root_directory = r"C:\Users\14875\Desktop\imgs\1"
 
     # 目标图片大小
-    target_size = (512, 512)
+    target_size = (520, 520)
 
     # 确认操作
     print(f"将要处理路径下的所有图片: {root_directory}")
