@@ -26,8 +26,8 @@ def test_model(model, test_loader, device):
             results.append((np_imgs[0], np_imgs[1], np_imgs[2], mask_colormap))
 
             if i < 5:
-                cv2.imwrite(f'result_fused_10_Improvedloss_epoch{i}.png', cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR))
-                cv2.imwrite(f'result_mask_10_Improvedloss_epoch{i}.png', mask_colormap)
+                cv2.imwrite(f'result_fused_100_v2_epoch{i}.png', cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR))
+                cv2.imwrite(f'result_mask_100_v2_epoch{i}.png', mask_colormap)
     return results
 
 

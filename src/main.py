@@ -22,9 +22,14 @@ def main():
     print(f"Using device: {device}")
 
     # 数据集路径 (请修改为你实际的路径)
-    train_dir = "E:\\Multi-fusion_cnn-swinv2\\dataset\\train"
-    val_dir = "E:\\Multi-fusion_cnn-swinv2\\dataset\\val"
-    test_dir = "E:\\Multi-fusion_cnn-swinv2\\dataset\\test"
+    # train_dir = "E:ls\\Multi-fusion_cnn-swinv2\\dataset\\train"
+    # val_dir = "E:\\Multi-fusion_cnn-swinv2\\dataset\\val"
+    # test_dir = "E:\\Multi-fusion_cnn-swinv2\\dataset\\test"
+
+
+    train_dir = "/tmp/pycharm_project_781/dataset/train"
+    val_dir = "/tmp/pycharm_project_781/dataset/val"
+    test_dir = "/tmp/pycharm_project_781/dataset/test"
 
     # 注意：这里将 img_size 强制设为 512，适配 Swin Transformer 的 Patch/Window 计算
     try:
@@ -35,9 +40,9 @@ def main():
         print(f"Dataset Error: {e}")
         return
 
-    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=0)  # 显存不够可减小 batch_size
-    val_loader = DataLoader(val_dataset, batch_size=2, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)  # 显存不够可减小 batch_size
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
 
     print(f"Samples - Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
 
@@ -56,10 +61,10 @@ def main():
     # ).to(device)
 
     criterion = ImprovedFusionLoss(
-        w_detail=1.0,
-        w_ssim=0.5,
+        w_detail=2.0,           #LoG/梯度类）通常是驱动“清晰区域选择”的关键  1->2.0
+        w_ssim=0.5,             #整体看起来像”，导致细节不够锐     0.5->0.2
         w_mask_bin=0.05,
-        w_mask_tv=0.1,
+        w_mask_tv=0.02,          #鼓励 mask 平滑    0.1->0.02
         gaussian_ksize=5,
         gaussian_sigma=1.0,
         ssim_ksize=11,
@@ -70,12 +75,12 @@ def main():
     # 使用 AdamW 优化器，对 Transformer 更友好
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=3e-5,  # 比你原来更安全
+        lr=1e-4,  # 比你原来更安全
         weight_decay=1e-4
     )
 
     print("Starting training with Swin Transformer...")
-    # 训练 100 个 Epoch 足够看到效果 (Demo用)，实际科研可跑更多
+    # 训练 100 个 Epoch 足够看到效果 (Demo用)，实际科研可跑更多cd
     trained_model = train_model(model, train_loader, val_loader, criterion, optimizer, device, num_epochs=100)
 
     torch.save(trained_model.state_dict(), "swin_fusion_final.pth")
