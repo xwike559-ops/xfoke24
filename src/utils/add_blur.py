@@ -263,8 +263,8 @@ if __name__ == "__main__":
 
     sys.argv = [
         "add_blur.py",
-        "--input_dir", r"E:\test",
-        "--output_dir", r"E:\output",
+        "--input_dir", r"E:\train2017_part2",
+        "--output_dir", r"E:\train2017_part2\output",
         "--mode", "complementary"
     ]
     main()
