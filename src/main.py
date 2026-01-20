@@ -40,9 +40,9 @@ def main():
         print(f"Dataset Error: {e}")
         return
 
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)  # 显存不够可减小 batch_size
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, num_workers=0)  # 显存不够可减小 batch_size
+    val_loader = DataLoader(val_dataset, batch_size=2, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     print(f"Samples - Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
 
