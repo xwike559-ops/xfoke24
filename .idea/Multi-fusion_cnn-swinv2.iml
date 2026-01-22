@@ -2,7 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$" />
-    <orderEntry type="jdk" jdkName="CellDetecting" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Remote Python 3.10.8 (sftp://root@connect.cqa1.seetacloud.com:48223/root/.virtualenvs/Multi-fusion_cnn-swinv2/bin/python) (2)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">

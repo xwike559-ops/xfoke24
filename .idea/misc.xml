@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="CellDetecting" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="CellDetecting" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.10.8 (sftp://root@connect.cqa1.seetacloud.com:48223/root/.virtualenvs/Multi-fusion_cnn-swinv2/bin/python) (2)" project-jdk-type="Python SDK" />
 </project>
