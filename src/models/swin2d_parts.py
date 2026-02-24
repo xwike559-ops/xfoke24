@@ -103,7 +103,7 @@ class WindowAttention(nn.Module):
         bias = 0.5 * (bi + bj)   # (B_,N,N)
 
         # 可选：让 bias 更尖锐一点（对差异区域更聚焦）
-        # bias = torch.log(bias + eps)
+        bias = torch.log(bias + eps)
 
         return bias.unsqueeze(1)  # (B_,1,N,N)
 

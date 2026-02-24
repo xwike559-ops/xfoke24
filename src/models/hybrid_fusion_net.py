@@ -118,7 +118,7 @@ class SemanticPriorM(nn.Module):
             raise ValueError("diff_mode must be 'lap' or 'grad'")
         D = self._normalize01(D)
 
-        S_conf = self._semantic_conf(img1)  # 用 img1 跑语义即可（也可换成 (img1+img2)/2）
+        S_conf = self._semantic_conf((img1+img2)/2)  # 用 img1 跑语义即可（也可换成 (img1+img2)/2）
 
         if self.semantic_mode == "edge":
             S_edge = self._grad_mag(S_conf)
@@ -359,7 +359,9 @@ class HybridFusionNet(nn.Module):
         cat = torch.cat([f1, f2], dim=1)  # (B,2C,H,W)
 
         # Transformer on concat with semantic prior M_stage
-        tr = tr_mixer(cat, M=M_stage)     # (B,2C,H/2,W/2)
+        tr = tr_mixer(cat, M=M_stage)     # (B,2C,H/2,W/2)   PatchTokenMixer--把特征图变成 token（下采样）
+
+
         tr = tr_proj(tr)                  # (B,C,H/2,W/2)
         tr = F.interpolate(tr, size=f1.shape[-2:], mode="bilinear", align_corners=False)
 
@@ -421,14 +423,5 @@ class HybridFusionNet(nn.Module):
 
         x = self.up2(x)                             # 256
         x = self.dec2(torch.cat([x, s2_g], dim=1))
-
-        x = self.up1(x)                             # 512
-        x = self.dec1(torch.cat([x, s1_g], dim=1))
-
-        x = self.dec0(torch.cat([x, (self.stem(img1) + self.stem(img2)) / 2.0], dim=1))
-
-        mask_logits = self.mask_head(x)             # (B,1,512,512)
-        mask = torch.sigmoid(mask_logits).clamp(1e-4, 1.0 - 1e-4)
-
         fused_image = mask * img1 + (1 - mask) * img2
         return fused_image, mask, mask_logits
