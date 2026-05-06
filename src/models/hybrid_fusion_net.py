@@ -423,5 +423,12 @@ class HybridFusionNet(nn.Module):
 
         x = self.up2(x)                             # 256
         x = self.dec2(torch.cat([x, s2_g], dim=1))
+
+        x = self.up1(x)
+        x = self.dec1(torch.cat([x, s1_g], dim=1))
+
+        mask_logits = self.mask_head(x)
+        mask = torch.sigmoid(mask_logits)
+
         fused_image = mask * img1 + (1 - mask) * img2
         return fused_image, mask, mask_logits

@@ -81,7 +81,7 @@ def main():
 
     print("Starting training with Swin Transformer...")
     # 训练 100 个 Epoch 足够看到效果 (Demo用)，实际科研可跑更多cd
-    trained_model = train_model(model, train_loader, val_loader, criterion, optimizer, device, num_epochs=100)
+    trained_model = train_model(model, train_loader, val_loader, criterion, optimizer, device, num_epochs=10)
 
     torch.save(trained_model.state_dict(), "swin_fusion_final.pth")
     print("Model saved.")
