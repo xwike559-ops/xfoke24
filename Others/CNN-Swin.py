@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import os
 import matplotlib.pyplot as plt
+from pathlib import Path
 from tqdm import tqdm
 import random
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
@@ -498,9 +499,11 @@ def train_model(model, train_loader, val_loader, criterion,
 
     return model
 
-def test_model(model, test_loader, device):
+def test_model(model, test_loader, device, output_dir="experiments/manual_cnn_swin/samples"):
     model.eval()
     results = []
+    samples_dir = Path(output_dir)
+    samples_dir.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
         for i, (img1, img2) in enumerate(test_loader):
             img1, img2 = img1.to(device), img2.to(device)
@@ -521,12 +524,14 @@ def test_model(model, test_loader, device):
             results.append((np_imgs[0], np_imgs[1], np_imgs[2], mask_colormap))
 
             if i < 5:
-                cv2.imwrite(f'result_fused_10_epoch{i}.png', cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR))
-                cv2.imwrite(f'result_mask_10_epoch{i}.png', mask_colormap)
+                cv2.imwrite(str(samples_dir / f"pair_{i:03d}_fused.png"), cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR))
+                cv2.imwrite(str(samples_dir / f"pair_{i:03d}_mask.png"), mask_colormap)
     return results
 
 
-def visualize_results(results):
+def visualize_results(results, output_dir="experiments/manual_cnn_swin/figures", show=False):
+    figures_dir = Path(output_dir)
+    figures_dir.mkdir(parents=True, exist_ok=True)
     for i, (img1, img2, fused, mask) in enumerate(results[:3]):
         plt.figure(figsize=(20, 5))
 
@@ -548,8 +553,10 @@ def visualize_results(results):
         plt.axis('off')
 
         plt.tight_layout()
-        plt.savefig(f'vis_swin_result_{i}.png')
-        plt.show()
+        plt.savefig(figures_dir / f"pair_{i:03d}_overview.png")
+        if show:
+            plt.show()
+        plt.close()
 
 
 # ===============================================================================
@@ -610,8 +617,11 @@ def main():
     # 训练 100 个 Epoch 足够看到效果 (Demo用)，实际科研可跑更多
     trained_model = train_model(model, train_loader, val_loader, criterion, optimizer, device, num_epochs=10)
 
-    torch.save(trained_model.state_dict(), "swin_fusion_final.pth")
-    print("Model saved.")
+    checkpoint_dir = Path("experiments/manual_cnn_swin/checkpoints")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / "swin_fusion_final.pth"
+    torch.save(trained_model.state_dict(), checkpoint_path)
+    print(f"Model saved: {checkpoint_path}")
 
     print("Testing model...")
     results = test_model(trained_model, test_loader, device)

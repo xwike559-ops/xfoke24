@@ -296,6 +296,11 @@ class HybridFusionNet(nn.Module):
         )
 
         # Transformer mixers (concat features)
+        # Note: tr1-tr4 are not strict img1 <-> img2 cross-attention.
+        # The two feature streams are first concatenated on the channel axis, then
+        # Swin window self-attention is applied to the joint feature tensor.
+        # A stricter cross-attention design would keep f1/f2 as separate tokens:
+        # q1 from f1, k2/v2 from f2; q2 from f2, k1/v1 from f1.
         self.tr1 = PatchTokenMixer(img_size=img_size,     in_ch=C * 2, embed_dim=96,
                                    patch_size=2, num_heads=4, window_size=8,
                                    prior_beta=prior_beta, learnable_prior=learnable_prior)
@@ -319,6 +324,11 @@ class HybridFusionNet(nn.Module):
         self.em3 = SpatialEnhanceModule(C)
         self.em4 = SpatialEnhanceModule(C)
 
+        # Bottleneck token interaction.
+        # CrossAttentionFuse uses query/key/value attention internally, but both
+        # token inputs below come from the same fused cat4 tensor. This is better
+        # described as token-level asymmetric interaction / pseudo cross-attention,
+        # not strict dual-image cross-attention.
         self.bottleneck_embed = nn.Conv2d(C * 2, 192, 1)
         self.cross_fuse = CrossAttentionFuse(dim=192, num_heads=6)
         self.bottleneck_back = nn.Conv2d(192, C, 1)
@@ -358,7 +368,9 @@ class HybridFusionNet(nn.Module):
 
         cat = torch.cat([f1, f2], dim=1)  # (B,2C,H,W)
 
-        # Transformer on concat with semantic prior M_stage
+        # Transformer on concat with semantic prior M_stage.
+        # q/k/v are all generated from cat, so this is self-attention on
+        # concatenated features instead of explicit img1-to-img2 cross-attention.
         tr = tr_mixer(cat, M=M_stage)     # (B,2C,H/2,W/2)   PatchTokenMixer--把特征图变成 token（下采样）
 
 
@@ -404,13 +416,15 @@ class HybridFusionNet(nn.Module):
         M4 = F.interpolate(M_full, size=d3_f1.shape[-2:], mode="bilinear", align_corners=False) if M_full is not None else None
         s4_f1, s4_f2, s4_g = self._stage(d3_f1, d3_f2, self.cnn_stage4, self.tr4, self.tr_proj4, self.em4, M_stage=M4)
 
-        # ---- bottleneck cross-attn ----
+        # ---- bottleneck pseudo cross-attn / asymmetric token interaction ----
         cat4 = torch.cat([s4_f1, s4_f2], dim=1)
         b = self.bottleneck_embed(cat4)             # (B,192,64,64)
         B, Cb, H, W = b.shape
         t = b.flatten(2).transpose(1, 2)            # (B,L,C)
 
         t1 = t
+        # t2 is the reversed order of the same fused token sequence, not a token
+        # sequence independently generated from img2.
         t2 = torch.flip(t, dims=[1])                # cheap asymmetry
         z = self.cross_fuse(t1, t2)
         z = z.transpose(1, 2).contiguous().view(B, Cb, H, W)

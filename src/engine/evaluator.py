@@ -1,11 +1,16 @@
 import torch
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+from pathlib import Path
 
-def test_model(model, test_loader, device):
+
+def test_model(model, test_loader, device, output_dir=None, max_save=5):
     model.eval()
     results = []
+    samples_dir = Path(output_dir) if output_dir is not None else None
+    if samples_dir is not None:
+        samples_dir.mkdir(parents=True, exist_ok=True)
+
     with torch.no_grad():
         for i, (img1, img2) in enumerate(test_loader):
             img1, img2 = img1.to(device), img2.to(device)
@@ -25,14 +30,26 @@ def test_model(model, test_loader, device):
 
             results.append((np_imgs[0], np_imgs[1], np_imgs[2], mask_colormap))
 
-            if i < 5:
-                cv2.imwrite(f'result_V3_5.1epoch{i}.png', cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR))
-                cv2.imwrite(f'resultmask_v3_5.1epoch{i}.png', mask_colormap)
+            if samples_dir is not None and i < max_save:
+                cv2.imwrite(
+                    str(samples_dir / f"pair_{i:03d}_fused.png"),
+                    cv2.cvtColor(np_imgs[2], cv2.COLOR_RGB2BGR),
+                )
+                cv2.imwrite(str(samples_dir / f"pair_{i:03d}_mask.png"), mask_colormap)
     return results
 
 
-def visualize_results(results):
-    for i, (img1, img2, fused, mask) in enumerate(results[:3]):
+def visualize_results(results, output_dir=None, max_items=3, show=False):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError("matplotlib is required to save overview figures.") from exc
+
+    figures_dir = Path(output_dir) if output_dir is not None else None
+    if figures_dir is not None:
+        figures_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, (img1, img2, fused, mask) in enumerate(results[:max_items]):
         plt.figure(figsize=(20, 5))
 
         plt.subplot(1, 4, 1);
@@ -53,5 +70,8 @@ def visualize_results(results):
         plt.axis('off')
 
         plt.tight_layout()
-        plt.savefig(f'vis_swin_result_{i}.png')
-        plt.show()
+        if figures_dir is not None:
+            plt.savefig(figures_dir / f"pair_{i:03d}_overview.png")
+        if show:
+            plt.show()
+        plt.close()

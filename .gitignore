@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+.idea/
+
+experiments/runs/
+experiments/manual_cnn_swin/
+out/
+
+*.pth
+!swin_fusion_final.pth
