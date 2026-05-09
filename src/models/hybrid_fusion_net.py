@@ -118,7 +118,9 @@ class SemanticPriorM(nn.Module):
             raise ValueError("diff_mode must be 'lap' or 'grad'")
         D = self._normalize01(D)
 
-        S_conf = self._semantic_conf((img1+img2)/2)  # 用 img1 跑语义即可（也可换成 (img1+img2)/2）
+        # Default baseline: use the averaged image pair for DeepLabv3 confidence
+        # to reduce single-source semantic bias.
+        S_conf = self._semantic_conf((img1+img2)/2)
 
         if self.semantic_mode == "edge":
             S_edge = self._grad_mag(S_conf)

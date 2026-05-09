@@ -39,6 +39,23 @@ def parse_args():
     # device 留空时自动优先用 cuda；也可以手动传 --device cpu 或 --device cuda:0。
     parser.add_argument("--device", type=str, default=None)
 
+    # 语义/结构先验 M 参数。
+    # 默认启用当前完整 baseline；做无先验对照实验时使用 --no-semantic-prior。
+    prior_group = parser.add_mutually_exclusive_group()
+    prior_group.add_argument("--use-semantic-prior", dest="use_semantic_prior", action="store_true")
+    prior_group.add_argument("--no-semantic-prior", dest="use_semantic_prior", action="store_false")
+    parser.set_defaults(use_semantic_prior=True)
+    parser.add_argument("--prior-diff-mode", choices=("lap", "grad"), default="lap")
+    parser.add_argument("--prior-semantic-mode", choices=("edge", "gate"), default="edge")
+    parser.add_argument("--prior-lam", type=float, default=2.0)
+    parser.add_argument("--prior-gamma", type=float, default=1.5)
+    parser.add_argument("--prior-beta", type=float, default=1.0)
+    parser.add_argument("--learnable-prior", action="store_true")
+    deeplab_group = parser.add_mutually_exclusive_group()
+    deeplab_group.add_argument("--use-deeplab", dest="use_deeplab", action="store_true")
+    deeplab_group.add_argument("--no-deeplab", dest="use_deeplab", action="store_false")
+    parser.set_defaults(use_deeplab=True)
+
     # 损失函数与权重。
     # improved 是当前主线版本；stable 保留为对照实验。
     parser.add_argument("--loss", choices=("improved", "stable"), default="improved")
@@ -143,7 +160,17 @@ def main():
     print(f"Samples - Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
 
     # 初始化融合模型，并记录可训练参数量，后续比较模型版本时很有用。
-    model = HybridFusionNet(img_size=args.img_size).to(device)
+    model = HybridFusionNet(
+        img_size=args.img_size,
+        use_semantic_prior=args.use_semantic_prior,
+        prior_diff_mode=args.prior_diff_mode,
+        prior_semantic_mode=args.prior_semantic_mode,
+        prior_lam=args.prior_lam,
+        prior_gamma=args.prior_gamma,
+        prior_beta=args.prior_beta,
+        learnable_prior=args.learnable_prior,
+        use_deeplab=args.use_deeplab,
+    ).to(device)
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Swin-Fusion Model Parameters: {params / 1e6:.2f}M")
 
@@ -180,6 +207,16 @@ def main():
             "model": {
                 "name": model.__class__.__name__,
                 "trainable_params": params,
+            },
+            "semantic_prior": {
+                "use_semantic_prior": args.use_semantic_prior,
+                "prior_diff_mode": args.prior_diff_mode,
+                "prior_semantic_mode": args.prior_semantic_mode,
+                "prior_lam": args.prior_lam,
+                "prior_gamma": args.prior_gamma,
+                "prior_beta": args.prior_beta,
+                "learnable_prior": args.learnable_prior,
+                "use_deeplab": args.use_deeplab,
             },
             "loss": {
                 "name": criterion.__class__.__name__,
