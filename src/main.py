@@ -45,11 +45,26 @@ def parse_args():
     prior_group.add_argument("--use-semantic-prior", dest="use_semantic_prior", action="store_true")
     prior_group.add_argument("--no-semantic-prior", dest="use_semantic_prior", action="store_false")
     parser.set_defaults(use_semantic_prior=True)
-    parser.add_argument("--prior-diff-mode", choices=("lap", "grad"), default="lap")
-    parser.add_argument("--prior-semantic-mode", choices=("edge", "gate"), default="edge")
+    parser.add_argument(
+        "--prior-diff-mode",
+        choices=("lap", "grad", "sobel", "local_contrast", "multiscale_focus"),
+        default="lap",
+    )
+    parser.add_argument(
+        "--prior-semantic-mode",
+        choices=("edge", "gate", "weighted_sum", "adaptive"),
+        default="edge",
+    )
     parser.add_argument("--prior-lam", type=float, default=2.0)
     parser.add_argument("--prior-gamma", type=float, default=1.5)
+    parser.add_argument("--prior-semantic-alpha", type=float, default=0.7)
+    parser.add_argument("--prior-semantic-mu", type=float, default=0.5)
     parser.add_argument("--prior-beta", type=float, default=1.0)
+    parser.add_argument(
+        "--prior-bias-mode",
+        choices=("sum_log", "sum", "product", "diff", "hybrid"),
+        default="sum_log",
+    )
     parser.add_argument("--learnable-prior", action="store_true")
     deeplab_group = parser.add_mutually_exclusive_group()
     deeplab_group.add_argument("--use-deeplab", dest="use_deeplab", action="store_true")
@@ -167,7 +182,10 @@ def main():
         prior_semantic_mode=args.prior_semantic_mode,
         prior_lam=args.prior_lam,
         prior_gamma=args.prior_gamma,
+        prior_semantic_alpha=args.prior_semantic_alpha,
+        prior_semantic_mu=args.prior_semantic_mu,
         prior_beta=args.prior_beta,
+        prior_bias_mode=args.prior_bias_mode,
         learnable_prior=args.learnable_prior,
         use_deeplab=args.use_deeplab,
     ).to(device)
@@ -214,7 +232,10 @@ def main():
                 "prior_semantic_mode": args.prior_semantic_mode,
                 "prior_lam": args.prior_lam,
                 "prior_gamma": args.prior_gamma,
+                "prior_semantic_alpha": args.prior_semantic_alpha,
+                "prior_semantic_mu": args.prior_semantic_mu,
                 "prior_beta": args.prior_beta,
+                "prior_bias_mode": args.prior_bias_mode,
                 "learnable_prior": args.learnable_prior,
                 "use_deeplab": args.use_deeplab,
             },

@@ -45,11 +45,13 @@ class WindowAttention(nn.Module):
     def __init__(self, dim, window_size, num_heads,
                  qkv_bias=True, qk_scale=None,
                  attn_drop=0., proj_drop=0.,
-                 prior_beta=1.0, learnable_prior=False):
+                 prior_beta=1.0, learnable_prior=False,
+                 prior_bias_mode="sum_log"):
         super().__init__()
         self.dim = dim
         self.window_size = window_size
         self.num_heads = num_heads
+        self.prior_bias_mode = prior_bias_mode
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
 
@@ -89,7 +91,8 @@ class WindowAttention(nn.Module):
     def _semantic_bias(self, M_win, eps=1e-6):
         """
         M_win: (B_, N) or (B_, N, 1) in [0,1]
-        return bias: (B_, 1, N, N)
+        其中 B_ = B*nW (窗口数)，N = 64 (window_size²)
+        return bias: (B_, 1, N, N) ← 注意力矩阵偏置
         """
         if M_win is None:
             return None
@@ -98,12 +101,30 @@ class WindowAttention(nn.Module):
         M_win = M_win.clamp(0.0, 1.0)
 
         # bias_ij = 0.5*(m_i + m_j)
+           # ---- 核心：两两组合 ----
+           # 对于窗口内的 N 个 token，计算所有注意力对 (i,j) 的偏置
         bi = M_win.unsqueeze(2)  # (B_,N,1)
         bj = M_win.unsqueeze(1)  # (B_,1,N)
-        bias = 0.5 * (bi + bj)   # (B_,N,N)
+        sum_bias = 0.5 * (bi + bj)   # (B_,N,N)
 
         # 可选：让 bias 更尖锐一点（对差异区域更聚焦）
-        bias = torch.log(bias + eps)
+           # ---- 增强：对数变换 ----
+            # 让差异更明显（高值→更高，低值→更低）
+        if self.prior_bias_mode == "sum_log":
+            bias = torch.log(sum_bias + eps)
+        elif self.prior_bias_mode == "sum":
+            bias = sum_bias
+        elif self.prior_bias_mode == "product":
+            bias = bi * bj
+        elif self.prior_bias_mode == "diff":
+            bias = -torch.abs(bi - bj)
+        elif self.prior_bias_mode == "hybrid":
+            bias = torch.log(sum_bias + eps) + (bi * bj) - torch.abs(bi - bj)
+        else:
+            raise ValueError(
+                "prior_bias_mode must be one of: 'sum_log', 'sum', "
+                "'product', 'diff', 'hybrid'"
+            )
 
         return bias.unsqueeze(1)  # (B_,1,N,N)
 
@@ -156,7 +177,8 @@ class SwinTransformerBlock2D(nn.Module):
                  mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 prior_beta=1.0, learnable_prior=False):
+                 prior_beta=1.0, learnable_prior=False,
+                 prior_bias_mode="sum_log"):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -169,7 +191,8 @@ class SwinTransformerBlock2D(nn.Module):
             dim, window_size=window_size, num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale,
             attn_drop=attn_drop, proj_drop=drop,
-            prior_beta=prior_beta, learnable_prior=learnable_prior
+            prior_beta=prior_beta, learnable_prior=learnable_prior,
+            prior_bias_mode=prior_bias_mode
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -236,7 +259,7 @@ class SwinTransformerBlock2D(nn.Module):
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # (B*nW, ws, ws, C)
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # (B_, N, C)
-
+        # switch to (B_, N, 1) for semantic prior map
         if shifted_M is not None:
             m_windows = window_partition(shifted_M, self.window_size)  # (B*nW, ws, ws, 1)
             m_windows = m_windows.view(-1, self.window_size * self.window_size, 1)  # (B_, N, 1)
@@ -247,6 +270,7 @@ class SwinTransformerBlock2D(nn.Module):
         attn_mask = self._build_attn_mask(H, W, device=x.device)
 
         # W-MSA/SW-MSA with semantic prior
+        #窗口内自注意力（核心：注入先验）
         attn_windows = self.attn(x_windows, mask=attn_mask, M_win=m_windows)
 
         # merge windows

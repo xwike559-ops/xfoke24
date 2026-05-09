@@ -14,20 +14,32 @@ from .swin2d_parts import (
 class SemanticPriorM(nn.Module):
     """
     Build 1-channel semantic-guided focus-difference prior M in [0,1]:
-      D = |LoG/Laplacian(gray(img1)) - LoG/Laplacian(gray(img2))|
+      D = low-level focus/structure difference from img1/img2
       S_conf = top1 softmax prob from DeepLabv3
       S_edge = |∇S_conf| (Sobel)
-      M = Normalize( D * (1 + lam*S_edge) ) ^ gamma
+      M = semantic_mode(D, S_conf, S_edge)
 
     Inputs img1,img2 are [0,1] float tensors: (B,3,H,W)
+
+    Current configurable modes:
+      diff_mode = lap | grad | sobel | local_contrast | multiscale_focus
+      semantic_mode = edge | gate | weighted_sum | adaptive
+
+    Combination formulas:
+      edge:         M = Normalize(D * (1 + lam * S_edge)) ^ gamma
+      gate:         M = Normalize(D * S_conf) ^ gamma
+      weighted_sum: M = Normalize(alpha * D + (1 - alpha) * S_edge) ^ gamma
+      adaptive:     M = Normalize(D * (1 + lam * S_edge) + mu * D * S_conf) ^ gamma
     """
     def __init__(self, diff_mode="lap", semantic_mode="edge", lam=2.0, gamma=1.5,
-                 use_deeplab=True):
+                 semantic_alpha=0.7, semantic_mu=0.5, use_deeplab=True):
         super().__init__()
         self.diff_mode = diff_mode
         self.semantic_mode = semantic_mode
         self.lam = float(lam)
         self.gamma = float(gamma)
+        self.semantic_alpha = float(semantic_alpha)
+        self.semantic_mu = float(semantic_mu)
         self.use_deeplab = bool(use_deeplab)
 
         if self.use_deeplab:
@@ -82,6 +94,40 @@ class SemanticPriorM(nn.Module):
         gy = F.conv2d(x, ky, padding=1)
         return torch.sqrt(gx * gx + gy * gy + 1e-6)
 
+    @staticmethod
+    def _local_contrast(gray, kernel_size=7):
+        pad = kernel_size // 2
+        mean = F.avg_pool2d(gray, kernel_size=kernel_size, stride=1, padding=pad)
+        mean_sq = F.avg_pool2d(gray * gray, kernel_size=kernel_size, stride=1, padding=pad)
+        var = (mean_sq - mean * mean).clamp_min(0.0)
+        return torch.sqrt(var + 1e-6)
+
+    @classmethod
+    def _multiscale_focus_measure(cls, gray):
+        responses = []
+        for kernel_size in (3, 5, 9):
+            local = cls._local_contrast(gray, kernel_size=kernel_size)
+            smoothed = F.avg_pool2d(gray, kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+            grad = cls._grad_mag(smoothed)
+            responses.append(local + grad)
+        return torch.stack(responses, dim=0).mean(dim=0)
+
+    def _focus_difference(self, g1, g2):
+        if self.diff_mode == "lap":
+            D = (self._laplacian_mag(g1) - self._laplacian_mag(g2)).abs()
+        elif self.diff_mode in ("grad", "sobel"):
+            D = (self._grad_mag(g1) - self._grad_mag(g2)).abs()
+        elif self.diff_mode == "local_contrast":
+            D = (self._local_contrast(g1) - self._local_contrast(g2)).abs()
+        elif self.diff_mode == "multiscale_focus":
+            D = (self._multiscale_focus_measure(g1) - self._multiscale_focus_measure(g2)).abs()
+        else:
+            raise ValueError(
+                "diff_mode must be one of: 'lap', 'grad', 'sobel', "
+                "'local_contrast', 'multiscale_focus'"
+            )
+        return self._normalize01(D)
+
     @torch.no_grad()
     def _semantic_conf(self, img):
         """
@@ -109,27 +155,32 @@ class SemanticPriorM(nn.Module):
         """
         g1 = self._to_gray(img1)
         g2 = self._to_gray(img2)
-
-        if self.diff_mode == "lap":
-            D = (self._laplacian_mag(g1) - self._laplacian_mag(g2)).abs()
-        elif self.diff_mode == "grad":
-            D = (self._grad_mag(g1) - self._grad_mag(g2)).abs()
-        else:
-            raise ValueError("diff_mode must be 'lap' or 'grad'")
-        D = self._normalize01(D)
+        #低级结构先验
+        D = self._focus_difference(g1, g2)
 
         # Default baseline: use the averaged image pair for DeepLabv3 confidence
         # to reduce single-source semantic bias.
+        #语义先验
         S_conf = self._semantic_conf((img1+img2)/2)
+        # Supported semantic_mode values:
+        # edge, gate, weighted_sum, adaptive.
+        S_edge = self._grad_mag(S_conf)
+        S_edge = self._normalize01(S_edge)
 
         if self.semantic_mode == "edge":
-            S_edge = self._grad_mag(S_conf)
-            S_edge = self._normalize01(S_edge)
             M = D * (1.0 + self.lam * S_edge)
         elif self.semantic_mode == "gate":
             M = D * S_conf
+        elif self.semantic_mode == "weighted_sum":
+            alpha = max(0.0, min(1.0, self.semantic_alpha))
+            M = alpha * D + (1.0 - alpha) * S_edge
+        elif self.semantic_mode == "adaptive":
+            M = D * (1.0 + self.lam * S_edge) + self.semantic_mu * D * S_conf
         else:
-            raise ValueError("semantic_mode must be 'edge' or 'gate'")
+            raise ValueError(
+                "semantic_mode must be one of: 'edge', 'gate', "
+                "'weighted_sum', 'adaptive'"
+            )
 
         M = self._normalize01(M)
         if self.gamma != 1.0:
@@ -187,7 +238,8 @@ class PatchTokenMixer(nn.Module):
     + Accept semantic prior M at same spatial size as input x, then resize to token grid and pass down.
     """
     def __init__(self, img_size, in_ch, embed_dim, patch_size=2, num_heads=4, window_size=8,
-                 prior_beta=1.0, learnable_prior=False):
+                 prior_beta=1.0, learnable_prior=False,
+                 prior_bias_mode="sum_log"):
         super().__init__()
         self.patch_embed = PatchEmbed2D(
             img_size=img_size, patch_size=patch_size, in_chans=in_ch, embed_dim=embed_dim
@@ -198,10 +250,12 @@ class PatchTokenMixer(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock2D(dim=embed_dim, num_heads=num_heads,
                                    window_size=window_size, shift_size=0,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior),
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode),
             SwinTransformerBlock2D(dim=embed_dim, num_heads=num_heads,
                                    window_size=window_size, shift_size=window_size // 2,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior),
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode),
         ])
         self.norm = nn.LayerNorm(embed_dim)
         self.back = nn.Conv2d(embed_dim, in_ch, 1)
@@ -259,7 +313,9 @@ class HybridFusionNet(nn.Module):
                  use_semantic_prior=True,
                  prior_diff_mode="lap", prior_semantic_mode="edge",
                  prior_lam=2.0, prior_gamma=1.5,
+                 prior_semantic_alpha=0.7, prior_semantic_mu=0.5,
                  prior_beta=1.0, learnable_prior=False,
+                 prior_bias_mode="sum_log",
                  use_deeplab=True):
         super().__init__()
         self.img_size = img_size
@@ -273,6 +329,8 @@ class HybridFusionNet(nn.Module):
                 semantic_mode=prior_semantic_mode,
                 lam=prior_lam,
                 gamma=prior_gamma,
+                semantic_alpha=prior_semantic_alpha,
+                semantic_mu=prior_semantic_mu,
                 use_deeplab=use_deeplab
             )
         else:
@@ -305,16 +363,20 @@ class HybridFusionNet(nn.Module):
         # q1 from f1, k2/v2 from f2; q2 from f2, k1/v1 from f1.
         self.tr1 = PatchTokenMixer(img_size=img_size,     in_ch=C * 2, embed_dim=96,
                                    patch_size=2, num_heads=4, window_size=8,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior)
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode)
         self.tr2 = PatchTokenMixer(img_size=img_size//2,  in_ch=C * 2, embed_dim=128,
                                    patch_size=2, num_heads=4, window_size=8,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior)
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode)
         self.tr3 = PatchTokenMixer(img_size=img_size//4,  in_ch=C * 2, embed_dim=160,
                                    patch_size=2, num_heads=5, window_size=8,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior)
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode)
         self.tr4 = PatchTokenMixer(img_size=img_size//8,  in_ch=C * 2, embed_dim=192,
                                    patch_size=2, num_heads=6, window_size=8,
-                                   prior_beta=prior_beta, learnable_prior=learnable_prior)
+                                   prior_beta=prior_beta, learnable_prior=learnable_prior,
+                                   prior_bias_mode=prior_bias_mode)
 
         self.tr_proj1 = nn.Conv2d(C * 2, C, 1)
         self.tr_proj2 = nn.Conv2d(C * 2, C, 1)
