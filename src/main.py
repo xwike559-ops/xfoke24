@@ -71,6 +71,12 @@ def parse_args():
     deeplab_group.add_argument("--no-deeplab", dest="use_deeplab", action="store_false")
     parser.set_defaults(use_deeplab=True)
 
+    parser.add_argument(
+        "--bottleneck-attn-mode",
+        choices=("pseudo", "true_cross"),
+        default="pseudo",
+    )
+
     # 损失函数与权重。
     # improved 是当前主线版本；stable 保留为对照实验。
     parser.add_argument("--loss", choices=("improved", "stable"), default="improved")
@@ -187,10 +193,12 @@ def main():
         prior_beta=args.prior_beta,
         prior_bias_mode=args.prior_bias_mode,
         learnable_prior=args.learnable_prior,
+        bottleneck_attn_mode=args.bottleneck_attn_mode,
         use_deeplab=args.use_deeplab,
     ).to(device)
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Swin-Fusion Model Parameters: {params / 1e6:.2f}M")
+    print(f"Bottleneck attention mode: {args.bottleneck_attn_mode}")
 
     # 构建损失函数和优化器。
     criterion = build_criterion(args, device)
@@ -225,6 +233,7 @@ def main():
             "model": {
                 "name": model.__class__.__name__,
                 "trainable_params": params,
+                "bottleneck_attn_mode": args.bottleneck_attn_mode,
             },
             "semantic_prior": {
                 "use_semantic_prior": args.use_semantic_prior,

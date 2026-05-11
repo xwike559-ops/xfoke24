@@ -158,7 +158,7 @@ Semantic prior and low-level structure prior combination strategy.
 
 Date: 2026-05-09
 
-Status: implemented, pending user experiments
+Status: user verified
 
 Design Alignment:
 
@@ -266,7 +266,7 @@ Next step:
 
 Date: 2026-05-09
 
-Status: implemented, pending user experiments
+Status: user verified
 
 Design Alignment:
 
@@ -358,6 +358,7 @@ Manual Test Conclusion:
 Run directories:
 
 Best prior_bias_mode:
+hybrid and sum_log are currently the best two modes.
 
 Fused-image observation:
 
@@ -369,4 +370,263 @@ Main problems:
 
 Next step:
 prior_beta ablation after prior_bias_mode is selected.
+```
+
+## Entry 005 - Prior Beta Ablation Plan
+
+Date: 2026-05-11
+
+Status: user verified
+
+Design Alignment:
+
+- This entry continues the second optimization direction: Swin attention prior injection.
+- The prior map M generation is unchanged.
+- The prior bias form is fixed during each run.
+- Only `prior_beta` changes, so the ablation variable is controlled.
+- Decoder, loss, bottleneck interaction, and fusion formula are unchanged.
+
+Experiment Target:
+
+Evaluate how strongly the prior bias should affect Swin attention logits.
+
+Current Candidate Bias Modes:
+
+```text
+sum_log
+hybrid
+```
+
+Beta Values To Test:
+
+```text
+0
+0.5
+1.0
+2.0
+4.0
+```
+
+Interpretation:
+
+```text
+prior_beta = 0:
+M is still generated, but it does not affect attention logits.
+
+prior_beta = 0.5:
+Weak prior injection.
+
+prior_beta = 1.0:
+Current default baseline.
+
+prior_beta = 2.0:
+Stronger prior injection.
+
+prior_beta = 4.0:
+Aggressive prior injection; check for over-guidance and artifacts.
+```
+
+Manual Test Conclusion:
+
+```text
+Run directories:
+
+Best prior_bias_mode:
+sum_log and hybrid remain the strongest candidates.
+
+Best prior_beta:
+Fixed beta in the 0 to 1 range is currently preferred.
+
+Fused-image observation:
+
+Mask observation:
+
+Prior-M and mask relation:
+
+Over-guidance symptoms:
+When beta is increased beyond 1, the model may introduce noise or excessive attention to prior-highlighted regions.
+
+Initial decision:
+Use a fixed prior_beta for now. Do not enable learnable beta at this stage.
+
+Next step:
+Discuss the next optimization direction after Swin prior injection.
+```
+
+## Entry 006 - Bottleneck True Cross-Attention Baseline
+
+Date: 2026-05-11
+
+Status: user verified
+
+Design Alignment:
+
+- This entry starts the third optimization direction in `plan_big.md`: bottleneck cross-attention structure upgrade.
+- The default mode remains `pseudo`, preserving the previous implementation for fair comparison.
+- The new `true_cross` mode explicitly builds tokens from `s4_f1` and `s4_f2`.
+- Prior M generation, Swin prior bias, decoder, loss, and fusion formula are unchanged.
+
+Optimization Target:
+
+Compare the current pseudo bottleneck interaction with true dual-branch cross-attention.
+
+Changed Files:
+
+- `src/models/hybrid_fusion_net.py`
+- `src/main.py`
+- `docs/optimization_logger.md`
+
+Available Modes:
+
+```text
+pseudo
+true_cross
+```
+
+Mode Definitions:
+
+```text
+pseudo:
+cat4 = concat(s4_f1, s4_f2)
+t1 = proj(cat4)
+t2 = reverse(t1)
+z = CrossAttentionFuse(t1, t2)
+```
+
+```text
+true_cross:
+t1 = proj1(s4_f1)
+t2 = proj2(s4_f2)
+z = CrossAttentionFuse(t1, t2)
+```
+
+New CLI Parameter:
+
+```text
+--bottleneck-attn-mode pseudo|true_cross
+```
+
+Recommended Test:
+
+Keep all prior settings fixed to the current best configuration, then compare:
+
+```powershell
+python src/main.py --experiment-name bottleneck_pseudo --bottleneck-attn-mode pseudo
+python src/main.py --experiment-name bottleneck_true_cross --bottleneck-attn-mode true_cross
+```
+
+Manual Test Conclusion:
+
+```text
+Run directories:
+
+Best bottleneck_attn_mode:
+true_cross is effective and should be treated as the current attention-interaction baseline.
+
+Fused-image observation:
+
+Mask observation:
+
+Large-region consistency:
+
+Single-source bias:
+
+Artifacts or instability:
+
+Initial decision:
+
+Next step:
+Insert an attention mechanism optimization stage before mask decision-map optimization.
+```
+
+## Entry 007 - Attention Mechanism Optimization Plan
+
+Date: 2026-05-11
+
+Status: planned, pending implementation discussion
+
+Design Alignment:
+
+- This entry is inserted after the bottleneck true cross-attention verification and before mask decision-map optimization.
+- The user has verified that true cross-attention is effective.
+- The next step should strengthen the attention modules and feature interaction before changing mask loss, mask decoder, or the final fusion rule.
+- Prior M generation, prior bias mode, prior_beta, loss, and `fused_image = mask * img1 + (1 - mask) * img2` should remain unchanged during this stage unless a later ablation explicitly targets them.
+
+Optimization Target:
+
+Improve the attention mechanism so the model sends cleaner and more discriminative features into the mask decoder.
+
+Todo Items From `plan_big.md`:
+
+```text
+1. Replace overly simple channel attention with ECA-Net style lightweight channel attention.
+2. Add spatial attention.
+3. Add multi-scale attention to consider dependencies under different receptive fields.
+4. Study where to insert attention modules:
+   - Stem / Stage1
+   - Stage2-3
+   - Stage4
+   - Bottleneck
+   - Decoder
+5. Compare self-attention, cross-attention, and self-to-cross mixed attention where suitable.
+6. Keep deformable attention as optional later work, not the immediate first implementation.
+```
+
+Recommended Step Order:
+
+```text
+Step A:
+Use the verified true_cross bottleneck as the current baseline.
+
+Step B:
+Add ECA-style channel attention only.
+
+Step C:
+Add spatial attention only.
+
+Step D:
+Test channel + spatial attention together.
+
+Step E:
+Test multi-scale attention / multi-window Swin only after B-D are clear.
+
+Step F:
+Only after the attention baseline is selected, move to mask decision-map optimization.
+```
+
+Control Variables:
+
+```text
+prior_diff_mode: keep current selected setting
+prior_semantic_mode: keep current selected setting
+prior_bias_mode: keep current selected setting, likely sum_log or hybrid
+prior_beta: keep fixed in the verified stable range
+bottleneck_attn_mode: true_cross
+loss: unchanged
+decoder: unchanged unless the current step explicitly targets decoder attention
+fusion formula: unchanged
+```
+
+Manual Test Conclusion:
+
+```text
+Run directories:
+
+Best attention upgrade:
+
+Best insertion position:
+
+Fused-image observation:
+
+Mask observation:
+
+Prior-M and mask relation:
+
+Compute / memory cost:
+
+Artifacts or instability:
+
+Initial decision:
+
+Next step:
 ```

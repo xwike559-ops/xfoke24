@@ -14,10 +14,10 @@ from .swin2d_parts import (
 class SemanticPriorM(nn.Module):
     """
     Build 1-channel semantic-guided focus-difference prior M in [0,1]:
-      D = low-level focus/structure difference from img1/img2
+      D = |LoG/Laplacian(gray(img1)) - LoG/Laplacian(gray(img2))|
       S_conf = top1 softmax prob from DeepLabv3
       S_edge = |∇S_conf| (Sobel)
-      M = semantic_mode(D, S_conf, S_edge)
+      M = Normalize( D * (1 + lam*S_edge) ) ^ gamma
 
     Inputs img1,img2 are [0,1] float tensors: (B,3,H,W)
 
@@ -155,13 +155,13 @@ class SemanticPriorM(nn.Module):
         """
         g1 = self._to_gray(img1)
         g2 = self._to_gray(img2)
-        #低级结构先验
+    
         D = self._focus_difference(g1, g2)
 
         # Default baseline: use the averaged image pair for DeepLabv3 confidence
         # to reduce single-source semantic bias.
-        #语义先验
         S_conf = self._semantic_conf((img1+img2)/2)
+       
         # Supported semantic_mode values:
         # edge, gate, weighted_sum, adaptive.
         S_edge = self._grad_mag(S_conf)
@@ -316,8 +316,12 @@ class HybridFusionNet(nn.Module):
                  prior_semantic_alpha=0.7, prior_semantic_mu=0.5,
                  prior_beta=1.0, learnable_prior=False,
                  prior_bias_mode="sum_log",
+                 bottleneck_attn_mode="pseudo",
                  use_deeplab=True):
         super().__init__()
+        if bottleneck_attn_mode not in ("pseudo", "true_cross"):
+            raise ValueError("bottleneck_attn_mode must be 'pseudo' or 'true_cross'")
+        self.bottleneck_attn_mode = bottleneck_attn_mode
         self.img_size = img_size
         C = base_channels
 
@@ -394,6 +398,12 @@ class HybridFusionNet(nn.Module):
         # described as token-level asymmetric interaction / pseudo cross-attention,
         # not strict dual-image cross-attention.
         self.bottleneck_embed = nn.Conv2d(C * 2, 192, 1)
+        if self.bottleneck_attn_mode == "true_cross":
+            self.bottleneck_proj1 = nn.Conv2d(C, 192, 1)
+            self.bottleneck_proj2 = nn.Conv2d(C, 192, 1)
+        else:
+            self.bottleneck_proj1 = None
+            self.bottleneck_proj2 = None
         self.cross_fuse = CrossAttentionFuse(dim=192, num_heads=6)
         self.bottleneck_back = nn.Conv2d(192, C, 1)
 
@@ -480,16 +490,24 @@ class HybridFusionNet(nn.Module):
         M4 = F.interpolate(M_full, size=d3_f1.shape[-2:], mode="bilinear", align_corners=False) if M_full is not None else None
         s4_f1, s4_f2, s4_g = self._stage(d3_f1, d3_f2, self.cnn_stage4, self.tr4, self.tr_proj4, self.em4, M_stage=M4)
 
-        # ---- bottleneck pseudo cross-attn / asymmetric token interaction ----
-        cat4 = torch.cat([s4_f1, s4_f2], dim=1)
-        b = self.bottleneck_embed(cat4)             # (B,192,64,64)
-        B, Cb, H, W = b.shape
-        t = b.flatten(2).transpose(1, 2)            # (B,L,C)
+        # ---- bottleneck interaction ----
+        if self.bottleneck_attn_mode == "pseudo":
+            cat4 = torch.cat([s4_f1, s4_f2], dim=1)
+            b = self.bottleneck_embed(cat4)         # (B,192,64,64)
+            B, Cb, H, W = b.shape
+            t = b.flatten(2).transpose(1, 2)        # (B,L,C)
 
-        t1 = t
-        # t2 is the reversed order of the same fused token sequence, not a token
-        # sequence independently generated from img2.
-        t2 = torch.flip(t, dims=[1])                # cheap asymmetry
+            t1 = t
+            # t2 is the reversed order of the same fused token sequence, not a
+            # token sequence independently generated from img2.
+            t2 = torch.flip(t, dims=[1])
+        else:
+            b1 = self.bottleneck_proj1(s4_f1)
+            b2 = self.bottleneck_proj2(s4_f2)
+            B, Cb, H, W = b1.shape
+            t1 = b1.flatten(2).transpose(1, 2)
+            t2 = b2.flatten(2).transpose(1, 2)
+
         z = self.cross_fuse(t1, t2)
         z = z.transpose(1, 2).contiguous().view(B, Cb, H, W)
         z = self.bottleneck_back(z)                 # (B,C,64,64)
